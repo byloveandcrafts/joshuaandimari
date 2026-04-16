@@ -135,14 +135,14 @@ body::before {
 .preview-item img { width:100%; height:100%; object-fit:cover; }
 /* video preview in the staging grid — show as poster/thumbnail */
 .preview-item video { width:100%; height:100%; object-fit:cover; display:block; }
-.preview-item .rm { position:absolute; top:4px; right:4px; width:20px; height:20px; background:rgba(44,58,40,0.8); border:none; border-radius:50%; color:white; font-size:10px; cursor:pointer; display:flex; align-items:center; justify-content:center; }
+.preview-item .rm { position:absolute; top:4px; right:4px; width:26px; height:26px; background:rgba(44,58,40,0.85); border:none; border-radius:50%; color:white; font-size:11px; cursor:pointer; display:flex; align-items:center; justify-content:center; z-index:10; -webkit-tap-highlight-color:transparent; touch-action:manipulation; }
 .vid-badge { position:absolute; bottom:4px; left:4px; background:rgba(44,58,40,0.72); color:#fff; font-size:9px; letter-spacing:0.05em; padding:2px 6px; border-radius:4px; }
 /* play icon overlay on video previews */
 .vid-play { position:absolute; inset:0; display:flex; align-items:center; justify-content:center; pointer-events:none; }
 .vid-play svg { width:28px; height:28px; opacity:0.85; filter:drop-shadow(0 1px 3px rgba(0,0,0,0.4)); }
 
 /* ── BUTTON ─────────────────────────────── */
-.btn { display:inline-flex; align-items:center; gap:0.5rem; padding:0.7rem 1.6rem; border-radius:8px; font-family:'Jost',sans-serif; font-size:0.82rem; font-weight:400; letter-spacing:0.1em; text-transform:uppercase; cursor:pointer; transition:all var(--t); border:0.5px solid; }
+.btn { display:inline-flex; align-items:center; gap:0.5rem; padding:0.7rem 1.6rem; border-radius:8px; font-family:'Jost',sans-serif; font-size:0.82rem; font-weight:400; letter-spacing:0.1em; text-transform:uppercase; cursor:pointer; transition:all var(--t); border:0.5px solid; -webkit-tap-highlight-color:transparent; touch-action:manipulation; }
 .btn-primary { background:var(--ink); color:var(--cream); border-color:var(--ink); }
 .btn-primary:hover { background:var(--sage-dark); border-color:var(--sage-dark); }
 .btn-outline { background:transparent; color:var(--ink); border-color:var(--border); }
@@ -335,7 +335,7 @@ body::before {
           <p><strong>Tap to choose</strong> or drag & drop here</p>
           <p style="margin-top:4px;font-size:0.75rem;">Photos & Videos · JPG, PNG, MP4, MOV supported</p>
         </div>
-        <input type="file" id="file-input" multiple accept="image/*,video/*" />
+        <input type="file" id="file-input" multiple accept="image/jpeg,image/png,image/gif,image/webp,image/heic,image/heif,video/mp4,video/quicktime,video/x-m4v,video/*" />
         <div class="upload-progress" id="upload-prog">
           <div class="upload-progress-bar" id="upload-bar"></div>
         </div>
@@ -625,24 +625,40 @@ const PLAY_SVG = `<svg viewBox="0 0 48 48" fill="none" xmlns="http://www.w3.org/
 function handleFiles(files) {
   Array.from(files).forEach(file => {
     if (!file.type.startsWith('image/') && !file.type.startsWith('video/')) return;
-    pendingFiles.push(file);
+
+    // Normalise iOS .mov / HEVC videos: keep as-is for upload but mark mimeType as mp4
+    // so the ZIP extension and server mimeType are consistent.
+    let uploadFile = file;
+    if (file.type === 'video/quicktime' || (file.name && file.name.toLowerCase().endsWith('.mov'))) {
+      // Re-wrap as mp4 mime so the server stores it with the right extension
+      uploadFile = new File([file], file.name.replace(/\.mov$/i, '.mp4'), { type: 'video/mp4', lastModified: file.lastModified });
+    }
+
+    pendingFiles.push(uploadFile);
     const item = document.createElement('div');
     item.className = 'preview-item';
 
     const rm = document.createElement('button');
-    rm.className = 'rm'; rm.textContent = '✕';
-    const idx = pendingFiles.length - 1;
-    rm.onclick = e => { e.stopPropagation(); pendingFiles.splice(idx,1); item.remove(); updateUploadBtn(); };
+    rm.className = 'rm'; rm.innerHTML = '&#x2715;';
+    // FIX: capture a reference to the file object itself, not its index.
+    // Indices shift whenever earlier items are removed, causing wrong deletions.
+    rm.onclick = e => {
+      e.stopPropagation();
+      const pos = pendingFiles.indexOf(uploadFile);
+      if (pos !== -1) pendingFiles.splice(pos, 1);
+      item.remove();
+      updateUploadBtn();
+    };
 
-    if (file.type.startsWith('image/')) {
+    if (uploadFile.type.startsWith('image/')) {
       const img = document.createElement('img');
-      img.src = URL.createObjectURL(file);
+      img.src = URL.createObjectURL(uploadFile);
       item.appendChild(img);
     } else {
       // For video: capture first frame as canvas thumbnail instead of <video>
       // This avoids layout/flicker issues with video elements in grids
       const vid = document.createElement('video');
-      vid.src = URL.createObjectURL(file);
+      vid.src = URL.createObjectURL(uploadFile);
       vid.muted = true;
       vid.playsInline = true;
       vid.preload = 'metadata';
@@ -722,6 +738,11 @@ function compressImage(file, maxWidth = 1920, quality = 0.82) {
 // ─────────────────────────────────────────
 // UPLOAD → Apps Script → Google Drive
 // ─────────────────────────────────────────
+// iOS Safari crashes when base64-encoding large videos in one shot.
+// Threshold: files > 10 MB are uploaded in chunks of 1 MB each.
+const CHUNK_SIZE      = 1 * 1024 * 1024;  // 1 MB per chunk
+const CHUNK_THRESHOLD = 10 * 1024 * 1024; // files ≥ 10 MB use chunked upload
+
 async function uploadFiles() {
   if (!pendingFiles.length) return;
   const guestName = document.getElementById('guest-name').value.trim() || 'Anonymous Guest';
@@ -737,19 +758,29 @@ async function uploadFiles() {
 
   try {
     for (const originalFile of pendingFiles) {
-      const file   = await compressImage(originalFile);
-      const base64 = await fileToBase64(file);
+      const file = await compressImage(originalFile);
 
-      const res = await gas('upload', {
-        filename: file.name,
-        mimeType: file.type,
-        data:     base64,
-        guest:    guestName
-      });
+      let entry;
+      if (file.type.startsWith('video/') && file.size >= CHUNK_THRESHOLD) {
+        // ── Chunked upload for large videos (fixes iOS "Load failed") ──
+        entry = await uploadChunked(file, guestName, (chunkDone, chunkTotal) => {
+          const fileProgress = (done / total) + (chunkDone / chunkTotal / total);
+          bar.style.width = Math.round(fileProgress * 100) + '%';
+        });
+      } else {
+        // ── Single-shot upload for small files / images ──
+        const base64 = await fileToBase64(file);
+        const res = await gas('upload', {
+          filename: file.name,
+          mimeType: file.type,
+          data:     base64,
+          guest:    guestName
+        });
+        if (!res.ok) throw new Error(res.error || 'Upload failed');
+        entry = res.entry;
+      }
 
-      if (!res.ok) throw new Error(res.error || 'Upload failed');
-
-      mediaStore.unshift(res.entry);
+      mediaStore.unshift(entry);
       done++;
       bar.style.width = Math.round((done / total) * 100) + '%';
       updateStats();
@@ -768,11 +799,58 @@ async function uploadFiles() {
   btn.disabled = false; btn.textContent = 'Upload to Album ✦';
 }
 
+// Read a slice of a file as base64 without loading the whole file into memory.
+// Crucial for iOS where a single large FileReader call causes "Load failed".
+function sliceToBase64(file, start, end) {
+  return new Promise((resolve, reject) => {
+    const slice  = file.slice(start, end);
+    const reader = new FileReader();
+    reader.onload  = () => {
+      // result is "data:…;base64,XXXX" — we only want the XXXX part
+      const b64 = reader.result.split(',')[1];
+      resolve(b64);
+    };
+    reader.onerror = () => reject(new Error('FileReader error on slice'));
+    reader.readAsDataURL(slice);
+  });
+}
+
+// Send a large video file in 1 MB base64 chunks.
+// The Apps Script side receives initChunk / appendChunk / finalizeChunk actions.
+async function uploadChunked(file, guestName, onProgress) {
+  const totalChunks = Math.ceil(file.size / CHUNK_SIZE);
+
+  // 1. Init — create the Drive file and get back a session fileId
+  const initRes = await gas('initChunk', {
+    filename: file.name,
+    mimeType: file.type,
+    guest:    guestName,
+    total:    totalChunks
+  });
+  if (!initRes.ok) throw new Error(initRes.error || 'Chunk init failed');
+  const { sessionId } = initRes;
+
+  // 2. Send each chunk
+  for (let i = 0; i < totalChunks; i++) {
+    const start  = i * CHUNK_SIZE;
+    const end    = Math.min(start + CHUNK_SIZE, file.size);
+    const b64    = await sliceToBase64(file, start, end);
+    const appRes = await gas('appendChunk', { sessionId, chunk: i, data: b64 });
+    if (!appRes.ok) throw new Error(appRes.error || 'Chunk ' + i + ' failed');
+    if (onProgress) onProgress(i + 1, totalChunks);
+  }
+
+  // 3. Finalize — stitch chunks, delete temps, get the gallery entry back
+  const finRes = await gas('finalizeChunk', { sessionId });
+  if (!finRes.ok) throw new Error(finRes.error || 'Chunk finalize failed');
+  return finRes.entry;
+}
+
 function fileToBase64(file) {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
     reader.onload  = () => resolve(reader.result.split(',')[1]);
-    reader.onerror = reject;
+    reader.onerror = () => reject(new Error('FileReader failed — file may be too large for this browser'));
     reader.readAsDataURL(file);
   });
 }
@@ -891,7 +969,9 @@ async function downloadAll() {
   try {
     for (let i = 0; i < mediaStore.length; i++) {
       const m   = mediaStore[i];
-      const ext = m.name ? m.name.split('.').pop() : (m.type && m.type.includes('video') ? 'mp4' : 'jpg');
+      let ext = m.name ? m.name.split('.').pop().toLowerCase() : (m.type && m.type.includes('video') ? 'mp4' : 'jpg');
+      // Normalise iOS .mov → .mp4 so downloaded ZIP files open everywhere
+      if (ext === 'mov') ext = 'mp4';
       const res = await fetch(m.url);
       const buf = await res.arrayBuffer();
       folder.file((i+1) + '_' + (m.guest||'guest').replace(/\s+/g,'_') + '.' + ext, buf);
