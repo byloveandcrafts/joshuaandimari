@@ -836,6 +836,9 @@ function renderGallery() {
   });
 }
 
+// ─────────────────────────────────────────
+// LIGHTBOX
+// ─────────────────────────────────────────
 function openLb(i) {
   const m  = mediaStore[i];
   const lb = document.getElementById('lightbox');
@@ -843,14 +846,29 @@ function openLb(i) {
   c.innerHTML = '';
 
   if (m.type && m.type.startsWith('video/')) {
-    // Force direct raw streaming instead of using the Google Drive iframe
+    // Wrapper to hold video and fallback button
+    const wrap = document.createElement('div');
+    wrap.style.cssText = 'display:flex; flex-direction:column; align-items:center; gap:1rem;';
+
     const vid = document.createElement('video');
     vid.src = 'https://drive.google.com/uc?export=download&id=' + m.id;
     vid.controls = true;
-    vid.autoplay = true;
-    vid.playsInline = true; // Critical for iPhones to play without full-screen forced
-    vid.style.cssText = 'max-width:90vw; max-height:80vh; border-radius:8px; outline:none; background:#000;';
-    c.appendChild(vid);
+    vid.playsInline = true; // Keeps video from forcing full-screen on iOS
+    vid.preload = 'metadata'; // Helps mobile load the first frame without crashing
+    // Autoplay removed so mobile browsers don't block it!
+    vid.style.cssText = 'max-width:90vw; max-height:70vh; border-radius:8px; outline:none; background:#000;';
+
+    // Fallback button for strict mobile browsers
+    const btn = document.createElement('a');
+    btn.href = 'https://drive.google.com/file/d/' + m.id + '/view';
+    btn.target = '_blank';
+    btn.className = 'btn';
+    btn.style.cssText = 'background: rgba(255,255,255,0.15); color: white; border: 1px solid rgba(255,255,255,0.3); text-decoration: none; padding: 0.6rem 1.2rem; border-radius: 8px; font-size: 0.8rem; letter-spacing: 0.1em; text-transform: uppercase;';
+    btn.innerHTML = 'External Player ↗';
+
+    wrap.appendChild(vid);
+    wrap.appendChild(btn);
+    c.appendChild(wrap);
   } else {
     const img = document.createElement('img');
     img.src = m.url;
