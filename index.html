@@ -836,9 +836,6 @@ function renderGallery() {
   });
 }
 
-// ─────────────────────────────────────────
-// LIGHTBOX — videos play via iframe embed
-// ─────────────────────────────────────────
 function openLb(i) {
   const m  = mediaStore[i];
   const lb = document.getElementById('lightbox');
@@ -846,12 +843,14 @@ function openLb(i) {
   c.innerHTML = '';
 
   if (m.type && m.type.startsWith('video/')) {
-    // Use Drive's preview embed for video playback (avoids CORS on raw file)
-    const iframe = document.createElement('iframe');
-    iframe.src = 'https://drive.google.com/file/d/' + m.id + '/preview';
-    iframe.style.cssText = 'width:min(90vw,800px);height:min(80vh,450px);border:none;border-radius:8px;';
-    iframe.allow = 'autoplay';
-    c.appendChild(iframe);
+    // Force direct raw streaming instead of using the Google Drive iframe
+    const vid = document.createElement('video');
+    vid.src = 'https://drive.google.com/uc?export=download&id=' + m.id;
+    vid.controls = true;
+    vid.autoplay = true;
+    vid.playsInline = true; // Critical for iPhones to play without full-screen forced
+    vid.style.cssText = 'max-width:90vw; max-height:80vh; border-radius:8px; outline:none; background:#000;';
+    c.appendChild(vid);
   } else {
     const img = document.createElement('img');
     img.src = m.url;
@@ -861,13 +860,6 @@ function openLb(i) {
   document.getElementById('lb-info').textContent =
     (m.guest||'') + ' · ' + new Date(m.ts).toLocaleDateString('en-US',{year:'numeric',month:'long',day:'numeric'});
   lb.classList.add('open');
-}
-
-function closeLb(e) {
-  if (!e || e.target === document.getElementById('lightbox') || e.target.className === 'lb-close') {
-    document.getElementById('lb-content').innerHTML = '';
-    document.getElementById('lightbox').classList.remove('open');
-  }
 }
 
 // ─────────────────────────────────────────
