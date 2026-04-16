@@ -959,6 +959,20 @@ function openLb(i) {
 }
 
 // ─────────────────────────────────────────
+// CLOSE LIGHTBOX
+// ─────────────────────────────────────────
+function closeLb(e) {
+  // If called from overlay click, only close if clicking the backdrop itself
+  if (e && e.target !== document.getElementById('lightbox')) return;
+  const lb = document.getElementById('lightbox');
+  lb.classList.remove('open');
+  // Stop any playing video
+  const vid = lb.querySelector('video');
+  if (vid) { vid.pause(); vid.src = ''; }
+  document.getElementById('lb-content').innerHTML = '';
+}
+
+// ─────────────────────────────────────────
 // DOWNLOAD ALL
 // ─────────────────────────────────────────
 async function downloadAll() {
